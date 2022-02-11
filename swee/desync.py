@@ -38,11 +38,16 @@ def desync(func):
         return await resolve(res)
 
     async def resolve(res):
-        while isinstance(res, (asyncio.Future, asyncio.Task)):
+        while inspect.isawaitable(res):
             res = await resolve_future(res)
+        if isinstance(res, (list, tuple)):
+            res = await resolve_sequence(res)
         return res
 
-    async def resolve_future(node):
-        return await node
+    async def resolve_future(future):
+        return await future
+
+    async def resolve_sequence(sequence):
+        return [await resolve(item) for item in sequence]
 
     return wrapper
