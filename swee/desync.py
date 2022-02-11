@@ -34,13 +34,12 @@ def desync(func):
         walker = Walker(scopes)
         tree = ast.parse(inspect.getsource(func))
         res = walker.eval_node(tree.body[0])
+        await walker.join()
         return await resolve(res)
 
-    async def resolve(node):
-        if isinstance(node, (asyncio.Future, asyncio.Task)):
-            res = await resolve_future(node)
-        else:
-            raise NotImplementedError
+    async def resolve(res):
+        while isinstance(res, (asyncio.Future, asyncio.Task)):
+            res = await resolve_future(res)
         return res
 
     async def resolve_future(node):

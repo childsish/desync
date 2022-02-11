@@ -1,23 +1,28 @@
 import ast
 import asyncio
+import functools
 
+from concurrent.futures import ThreadPoolExecutor
 from swee.futuretools import ensure_future, is_future
-from typing import Sequence
+from typing import Sequence, Union
 
 
 class Walker:
     def __init__(self, scopes):
         self._scopes = scopes
-        self._orphan_tasks = []
+        self._tasks = []
+        self._executor = ThreadPoolExecutor(4)
 
     def eval_node(self, node):
         if isinstance(node, ast.Assign):
             self.eval_assign(node)
+        elif isinstance(node, ast.Await):
+            return self.eval_await(node)
         elif isinstance(node, ast.Call):
             return self.eval_call(node)
         elif isinstance(node, ast.Expr):
             return self.eval_expr(node)
-        elif isinstance(node, ast.FunctionDef):
+        elif isinstance(node, (ast.AsyncFunctionDef, ast.FunctionDef)):
             return self.eval_functiondef(node)
         elif isinstance(node, ast.Name):
             return self.eval_name(node)
@@ -38,19 +43,27 @@ class Walker:
             if is_future(value):
                 loop = asyncio.get_running_loop()
                 futures = [loop.create_future() for _ in node.targets[0].elts]
-                self._orphan_tasks.append(asyncio.create_task(eval_assign(futures, value)))
+                self._tasks.append(asyncio.create_task(eval_assign(futures, value)))
             else:
                 futures = [ensure_future(subvalue) for subvalue in value]
 
             for target, future in zip(node.targets, futures):
                 self.set_value(target.id, future)
 
+    def eval_await(self, node: ast.Await):
+        task = asyncio.create_task(eval_call(self.eval_node(node.value)))
+        self._tasks.append(task)
+        return task
+
     def eval_call(self, node: ast.Call):
-        return asyncio.create_task(eval_call(
+        task = asyncio.create_task(eval_call(
             self.eval_node(node.func),
             [self.eval_node(arg) for arg in node.args],
             [self.eval_node(keyword) for keyword in node.keywords],
+            self._executor,
         ))
+        self._tasks.append(task)
+        return task
 
     def eval_expr(self, node: ast.Expr):
         return self.eval_node(node.value)
@@ -79,16 +92,29 @@ class Walker:
     def set_value(self, key, value):
         self._scopes[-1][key] = value
 
+    async def join(self):
+        await asyncio.gather(*self._tasks)
 
-async def eval_assign(futures: Sequence[asyncio.Future], value):
-    await value
-    for future, sub_value in zip(futures, value.result()):
+
+async def eval_assign(futures: Sequence[asyncio.Future], values: Union[asyncio.Future, asyncio.Task]):
+    await values
+    for future, value in zip(futures, values.result()):
         future.set_result()
 
 
-async def eval_call(func, pre_args, pre_kwargs):
-    await asyncio.gather(*pre_args)
-    await asyncio.gather(*pre_kwargs)
-    args = [arg.result() for arg in pre_args]
-    kwargs = {key: value.result() for key, value in pre_kwargs}
-    return func(*args, **kwargs)
+async def eval_call(func, pre_args=None, pre_kwargs=None, executor=None):
+    if pre_args is None:
+        args = []
+    else:
+        await asyncio.gather(*pre_args)
+        args = [arg.result() for arg in pre_args]
+
+    if pre_kwargs is None:
+        kwargs = {}
+    else:
+        await asyncio.gather(*pre_kwargs)
+        kwargs = {key: value.result() for key, value in pre_kwargs}
+
+    loop = asyncio.get_running_loop()
+    partial_func = functools.partial(func, *args, **kwargs)
+    return await loop.run_in_executor(executor, partial_func)
