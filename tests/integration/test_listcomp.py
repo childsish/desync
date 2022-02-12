@@ -1,13 +1,9 @@
-import time
 import unittest
-import subprocess
 
 from swee import desync
 
 
 def inner(item):
-    prc = subprocess.Popen(['ping', '-n', '2', '127.0.0.1'], stdout=subprocess.PIPE)
-    prc.communicate()
     return item + 1
 
 

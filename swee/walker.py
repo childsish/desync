@@ -3,7 +3,9 @@ import asyncio
 import functools
 
 from concurrent.futures import ThreadPoolExecutor
+from operator import mod
 from swee.futuretools import ensure_future, is_future
+from swee.resolver import resolve
 from typing import Sequence, Union
 
 
@@ -20,10 +22,16 @@ class Walker:
             return self.eval_functiondef(node)
         elif isinstance(node, ast.Await):
             return self.eval_await(node)
+        elif isinstance(node, ast.BinOp):
+            return self.eval_binop(node)
         elif isinstance(node, ast.Call):
             return self.eval_call(node)
+        elif isinstance(node, ast.Constant):
+            return self.eval_constant(node)
         elif isinstance(node, ast.Expr):
             return self.eval_expr(node)
+        elif isinstance(node, ast.IfExp):
+            return self.eval_ifexp(node)
         elif isinstance(node, ast.ListComp):
             return self.eval_listcomp(node)
         elif isinstance(node, ast.Name):
@@ -47,6 +55,14 @@ class Walker:
         self._tasks.append(task)
         return task
 
+    def eval_binop(self, node: ast.BinOp):
+        left = self.eval_node(node.left)
+        right = self.eval_node(node.right)
+        op = mod if isinstance(node.op, ast.Mod) else None
+        task = asyncio.create_task(eval_call(op, [left, right]))
+        self._tasks.append(task)
+        return task
+
     def eval_call(self, node: ast.Call):
         task = asyncio.create_task(eval_call(
             self.eval_node(node.func),
@@ -57,6 +73,12 @@ class Walker:
         self._tasks.append(task)
         return task
 
+    def eval_constant(self, node: ast.Constant):
+        loop = asyncio.get_running_loop()
+        future = loop.create_future()
+        future.set_result(node.value)
+        return future
+
     def eval_expr(self, node: ast.Expr):
         return self.eval_node(node.value)
 
@@ -65,6 +87,14 @@ class Walker:
         for statement in node.body:
             res = self.eval_node(statement)
         return res
+
+    def eval_ifexp(self, node: ast.IfExp):
+        test = self.eval_node(node.test)
+        body = node.body
+        orelse = node.orelse
+        task = asyncio.create_task(eval_ifexp(test, body, orelse, self.copy_scopes()))
+        self._tasks.append(task)
+        return task
 
     def eval_listcomp(self, node: ast.ListComp):
         if len(node.generators) != 1:
@@ -79,7 +109,7 @@ class Walker:
         for scope in self._scopes[::-1]:
             if node.id in scope:
                 return scope[node.id]
-        return getattr(__builtins__, node.id)
+        return __builtins__[node.id]
 
     def eval_return(self, node: ast.Return):
         return self.eval_node(node.value)
@@ -121,26 +151,30 @@ async def eval_call(func, pre_args=None, pre_kwargs=None, executor=None):
     if pre_args is None:
         args = []
     else:
-        await asyncio.gather(*pre_args)
-        args = [arg.result() for arg in pre_args]
+        args = await resolve(pre_args)
 
     if pre_kwargs is None:
         kwargs = {}
     else:
-        await asyncio.gather(*pre_kwargs)
-        kwargs = {key: value.result() for key, value in pre_kwargs}
+        kwargs = {key: value.result() for key, value in await resolve(pre_kwargs)}
 
     loop = asyncio.get_running_loop()
     partial_func = functools.partial(func, *args, **kwargs)
     return await loop.run_in_executor(executor, partial_func)
 
 
-async def eval_listcomp(items, target, elt, scopes):
-    await items
+async def eval_ifexp(test_future, body, orelse, scopes):
+    test = await test_future
+    walker = Walker(scopes)
+    return walker.eval_node(body) if test else walker.eval_node(orelse)
+
+
+async def eval_listcomp(items_future, target, elt, scopes):
+    items = await items_future
     walker = Walker(scopes)
     res = []
     scopes.append({})
-    for item in items.result():
+    for item in items:
         walker.assign(target, item)
         res.append(walker.eval_node(elt))
     scopes.pop()
