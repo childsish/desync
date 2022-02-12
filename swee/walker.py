@@ -67,7 +67,7 @@ class Walker:
         task = asyncio.create_task(eval_call(
             self.eval_node(node.func),
             [self.eval_node(arg) for arg in node.args],
-            [self.eval_node(keyword) for keyword in node.keywords],
+            {keyword.arg: self.eval_node(keyword.value) for keyword in node.keywords},
             self._executor,
         ))
         self._tasks.append(task)
@@ -148,16 +148,8 @@ async def eval_assign(futures: Sequence[asyncio.Future], values: Union[asyncio.F
 
 
 async def eval_call(func, pre_args=None, pre_kwargs=None, executor=None):
-    if pre_args is None:
-        args = []
-    else:
-        args = await resolve(pre_args)
-
-    if pre_kwargs is None:
-        kwargs = {}
-    else:
-        kwargs = {key: value.result() for key, value in await resolve(pre_kwargs)}
-
+    args = [] if pre_args is None else await resolve(pre_args)
+    kwargs = {} if pre_kwargs is None else await resolve(pre_kwargs)
     loop = asyncio.get_running_loop()
     partial_func = functools.partial(func, *args, **kwargs)
     return await loop.run_in_executor(executor, partial_func)
