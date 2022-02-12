@@ -20,6 +20,8 @@ class Walker:
             self.eval_assign(node)
         elif isinstance(node, (ast.AsyncFunctionDef, ast.FunctionDef)):
             return self.eval_functiondef(node)
+        elif isinstance(node, ast.Attribute):
+            return self.eval_attribute(node)
         elif isinstance(node, ast.Await):
             return self.eval_await(node)
         elif isinstance(node, ast.BinOp):
@@ -55,6 +57,11 @@ class Walker:
                 self.set_value(target.id, ensure_future(value))
         else:
             self.assign(node.targets[0], ensure_future(value))
+
+    def eval_attribute(self, node: ast.Attribute):
+        task = asyncio.create_task(eval_attribute(self.eval_node(node.value), node.attr))
+        self._tasks.append(task)
+        return task
 
     def eval_await(self, node: ast.Await):
         task = asyncio.create_task(eval_call(self.eval_node(node.value)))
@@ -178,7 +185,12 @@ async def eval_assign(futures: Sequence[asyncio.Future], values: Union[asyncio.F
         future.set_result(value)
 
 
-async def eval_call(func, pre_args=None, pre_kwargs=None, *, ast_args=None, ast_kwargs=None, executor=None):
+async def eval_attribute(value_future, attr):
+    value = await value_future
+    return getattr(value, attr)
+
+
+async def eval_call(func_future, pre_args=None, pre_kwargs=None, *, ast_args=None, ast_kwargs=None, executor=None):
     pre_args = [] if pre_args is None else pre_args
     pre_kwargs = [] if pre_kwargs is None else pre_kwargs
     ast_args = [type(arg) for arg in pre_args] if ast_args is None else ast_args
@@ -198,6 +210,7 @@ async def eval_call(func, pre_args=None, pre_kwargs=None, *, ast_args=None, ast_
         else:
             kwargs[ast_kwarg.arg] = value
     loop = asyncio.get_running_loop()
+    func = await ensure_future(func_future)
     partial_func = functools.partial(func, *args, **kwargs)
     return await loop.run_in_executor(executor, partial_func)
 
