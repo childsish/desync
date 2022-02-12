@@ -3,6 +3,7 @@ import asyncio
 import inspect
 
 from swee.futuretools import ensure_future
+from swee.resolver import resolve
 from swee.walker import Walker
 
 
@@ -36,18 +37,5 @@ def desync(func):
         res = walker.eval_node(tree.body[0])
         await walker.join()
         return await resolve(res)
-
-    async def resolve(res):
-        while inspect.isawaitable(res):
-            res = await resolve_future(res)
-        if isinstance(res, (list, tuple)):
-            res = await resolve_sequence(res)
-        return res
-
-    async def resolve_future(future):
-        return await future
-
-    async def resolve_sequence(sequence):
-        return [await resolve(item) for item in sequence]
 
     return wrapper
