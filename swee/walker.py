@@ -28,6 +28,8 @@ class Walker:
             return self.eval_call(node)
         elif isinstance(node, ast.Constant):
             return self.eval_constant(node)
+        elif isinstance(node, ast.DictComp):
+            return self.eval_dictcomp(node)
         elif isinstance(node, ast.Expr):
             return self.eval_expr(node)
         elif isinstance(node, ast.IfExp):
@@ -38,6 +40,8 @@ class Walker:
             return self.eval_name(node)
         elif isinstance(node, ast.Return):
             return self.eval_return(node)
+        elif isinstance(node, ast.Starred):
+            return self.eval_starred(node)
         else:
             raise NotImplementedError(f'eval_node not implemented for {node}')
 
@@ -59,7 +63,12 @@ class Walker:
         left = self.eval_node(node.left)
         right = self.eval_node(node.right)
         op = mod if isinstance(node.op, ast.Mod) else None
-        task = asyncio.create_task(eval_call(op, [left, right]))
+        task = asyncio.create_task(eval_call(
+            op,
+            [left, right],
+            ast_args=[type(left), type(right)],
+            executor=self._executor,
+        ))
         self._tasks.append(task)
         return task
 
@@ -67,8 +76,10 @@ class Walker:
         task = asyncio.create_task(eval_call(
             self.eval_node(node.func),
             [self.eval_node(arg) for arg in node.args],
-            {keyword.arg: self.eval_node(keyword.value) for keyword in node.keywords},
-            self._executor,
+            [self.eval_node(keyword.value) for keyword in node.keywords],
+            ast_args=node.args,
+            ast_kwargs=node.keywords,
+            executor=self._executor,
         ))
         self._tasks.append(task)
         return task
@@ -78,6 +89,15 @@ class Walker:
         future = loop.create_future()
         future.set_result(node.value)
         return future
+
+    def eval_dictcomp(self, node: ast.DictComp):
+        if len(node.generators) != 1:
+            raise NotImplementedError
+        generator = node.generators[0]
+        items = self.eval_node(generator.iter)
+        task = asyncio.create_task(eval_dictcomp(items, generator.target, node.key, node.value, self.copy_scopes()))
+        self._tasks.append(task)
+        return task
 
     def eval_expr(self, node: ast.Expr):
         return self.eval_node(node.value)
@@ -114,6 +134,9 @@ class Walker:
     def eval_return(self, node: ast.Return):
         return self.eval_node(node.value)
 
+    def eval_starred(self, node: ast.Starred):
+        return self.eval_node(node.value)
+
     def assign(self, target, value):
         if not isinstance(target, (ast.Tuple, ast.List)):
             self.set_value(target.id, ensure_future(value))
@@ -147,9 +170,25 @@ async def eval_assign(futures: Sequence[asyncio.Future], values: Union[asyncio.F
         future.set_result()
 
 
-async def eval_call(func, pre_args=None, pre_kwargs=None, executor=None):
-    args = [] if pre_args is None else await resolve(pre_args)
-    kwargs = {} if pre_kwargs is None else await resolve(pre_kwargs)
+async def eval_call(func, pre_args=None, pre_kwargs=None, *, ast_args=None, ast_kwargs=None, executor=None):
+    pre_args = [] if pre_args is None else pre_args
+    pre_kwargs = [] if pre_kwargs is None else pre_kwargs
+    ast_args = [type(arg) for arg in pre_args] if ast_args is None else ast_args
+    ast_kwargs = [type(kwarg) for kwarg in pre_kwargs] if ast_kwargs is None else ast_kwargs
+
+    args = []
+    for ast_arg, pre_arg in zip(ast_args, await resolve(pre_args)):
+        if isinstance(ast_arg, ast.Starred):
+            args.extend(pre_arg)
+        else:
+            args.append(pre_arg)
+    kwargs = {}
+    for ast_kwarg, pre_kwarg in zip(ast_kwargs, pre_kwargs):
+        value = await resolve(pre_kwarg)
+        if ast_kwarg.arg is None:
+            kwargs.update(value)
+        else:
+            kwargs[ast_kwarg.arg] = value
     loop = asyncio.get_running_loop()
     partial_func = functools.partial(func, *args, **kwargs)
     return await loop.run_in_executor(executor, partial_func)
@@ -169,5 +208,18 @@ async def eval_listcomp(items_future, target, elt, scopes):
     for item in items:
         walker.assign(target, item)
         res.append(walker.eval_node(elt))
+    scopes.pop()
+    return res
+
+
+async def eval_dictcomp(items_future, target, key, value, scopes):
+    items = await items_future
+    walker = Walker(scopes)
+    res = {}
+    scopes.append({})
+    for item in items:
+        walker.assign(target, item)
+        tmp = await resolve(walker.eval_node(key))
+        res[tmp] = walker.eval_node(value)
     scopes.pop()
     return res

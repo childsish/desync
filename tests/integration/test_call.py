@@ -25,6 +25,6 @@ def outer(item1):
     return item2
 
 
-class TestSimple(unittest.TestCase):
-    def test_simple(self):
+class TestCall(unittest.TestCase):
+    def test_call(self):
         self.assertEqual(1, outer(0))
