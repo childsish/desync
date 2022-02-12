@@ -32,6 +32,8 @@ class Walker:
             return self.eval_dictcomp(node)
         elif isinstance(node, ast.Expr):
             return self.eval_expr(node)
+        elif isinstance(node, ast.For):
+            return self.eval_for(node)
         elif isinstance(node, ast.IfExp):
             return self.eval_ifexp(node)
         elif isinstance(node, ast.ListComp):
@@ -102,6 +104,12 @@ class Walker:
     def eval_expr(self, node: ast.Expr):
         return self.eval_node(node.value)
 
+    def eval_for(self, node: ast.For):
+        iter = self.eval_node(node.iter)
+        task = asyncio.create_task(eval_for(iter, node.target, node.body, self.copy_scopes()))
+        self._tasks.append(task)
+        return task
+
     def eval_functiondef(self, node: ast.FunctionDef):
         res = None
         for statement in node.body:
@@ -167,7 +175,7 @@ class Walker:
 async def eval_assign(futures: Sequence[asyncio.Future], values: Union[asyncio.Future, asyncio.Task]):
     await values
     for future, value in zip(futures, values.result()):
-        future.set_result()
+        future.set_result(value)
 
 
 async def eval_call(func, pre_args=None, pre_kwargs=None, *, ast_args=None, ast_kwargs=None, executor=None):
@@ -194,26 +202,8 @@ async def eval_call(func, pre_args=None, pre_kwargs=None, *, ast_args=None, ast_
     return await loop.run_in_executor(executor, partial_func)
 
 
-async def eval_ifexp(test_future, body, orelse, scopes):
-    test = await test_future
-    walker = Walker(scopes)
-    return walker.eval_node(body) if test else walker.eval_node(orelse)
-
-
-async def eval_listcomp(items_future, target, elt, scopes):
-    items = await items_future
-    walker = Walker(scopes)
-    res = []
-    scopes.append({})
-    for item in items:
-        walker.assign(target, item)
-        res.append(walker.eval_node(elt))
-    scopes.pop()
-    return res
-
-
 async def eval_dictcomp(items_future, target, key, value, scopes):
-    items = await items_future
+    items = await resolve(items_future)
     walker = Walker(scopes)
     res = {}
     scopes.append({})
@@ -221,5 +211,34 @@ async def eval_dictcomp(items_future, target, key, value, scopes):
         walker.assign(target, item)
         tmp = await resolve(walker.eval_node(key))
         res[tmp] = walker.eval_node(value)
+    scopes.pop()
+    return res
+
+
+async def eval_for(iter_future, target, body, scopes):
+    iter = await resolve(iter_future)
+    walker = Walker(scopes)
+    scopes.append({})
+    for item in iter:
+        walker.assign(target, item)
+        for statement in body:
+            walker.eval_node(statement)
+    scopes.pop()
+
+
+async def eval_ifexp(test_future, body, orelse, scopes):
+    test = await test_future
+    walker = Walker(scopes)
+    return walker.eval_node(body) if test else walker.eval_node(orelse)
+
+
+async def eval_listcomp(items_future, target, elt, scopes):
+    items = await resolve(items_future)
+    walker = Walker(scopes)
+    res = []
+    scopes.append({})
+    for item in items:
+        walker.assign(target, item)
+        res.append(walker.eval_node(elt))
     scopes.pop()
     return res
