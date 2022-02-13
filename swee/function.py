@@ -1,7 +1,7 @@
 import ast
 import inspect
 
-from swee.hash_function import hash_function
+from swee.hashtools import hash_function
 from typing import Callable
 
 

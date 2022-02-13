@@ -26,11 +26,11 @@ class Desync:
             return asyncio.run(self.run_outer_workflow(args, kwargs))
 
         scopes = [
-            self._func.get_ast().__dict__,
+            self._func.get_module().__dict__,
             {key: ensure_future(args[i]) if i < len(args) else ensure_future(kwargs[key])
              for i, key in enumerate(self._func.get_signature().parameters)},
         ]
-        walker = Walker(scopes)
+        walker = Walker(scopes, self._old_cache, self._new_cache)
         tree = ast.parse(self._func.get_source())
         return walker.eval_node(tree.body[0])
 
@@ -56,7 +56,7 @@ class Desync:
             {key: ensure_future(args[i]) if i < len(args) else ensure_future(kwargs[key])
              for i, key in enumerate(self._func.get_signature().parameters)},
         ]
-        walker = Walker(scopes)
+        walker = Walker(scopes, self._old_cache, self._new_cache)
         tree = self._func.get_ast()
         res = walker.eval_node(tree.body[0])
         await walker.join()

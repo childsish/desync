@@ -1,19 +1,25 @@
 import ast
 import asyncio
+import copy
 import functools
+import inspect
 
 from concurrent.futures import ThreadPoolExecutor
 from operator import mod
+from swee.cache import Cache
 from swee.futuretools import ensure_future, is_future
+from swee.hashtools import hash_function, hash_input
 from swee.resolver import resolve
-from typing import Sequence, Union
+from typing import Optional, Sequence, Union
 
 
 class Walker:
-    def __init__(self, scopes):
+    def __init__(self, scopes, old_cache, new_cache):
         self._scopes = scopes
         self._tasks = []
         self._executor = ThreadPoolExecutor(4)
+        self._old_cache = old_cache
+        self._new_cache = new_cache
 
     def eval_node(self, node):
         if isinstance(node, ast.Assign):
@@ -89,6 +95,8 @@ class Walker:
             ast_args=node.args,
             ast_kwargs=node.keywords,
             executor=self._executor,
+            old_cache=self._old_cache,
+            new_cache=self._new_cache,
         ))
         self._tasks.append(task)
         return task
@@ -104,7 +112,7 @@ class Walker:
             raise NotImplementedError
         generator = node.generators[0]
         items = self.eval_node(generator.iter)
-        task = asyncio.create_task(eval_dictcomp(items, generator.target, node.key, node.value, self.copy_scopes()))
+        task = asyncio.create_task(eval_dictcomp(items, generator.target, node.key, node.value, self.copy_scopes(), self._old_cache, self._new_cache))
         self._tasks.append(task)
         return task
 
@@ -113,7 +121,7 @@ class Walker:
 
     def eval_for(self, node: ast.For):
         iter = self.eval_node(node.iter)
-        task = asyncio.create_task(eval_for(iter, node.target, node.body, self.copy_scopes()))
+        task = asyncio.create_task(eval_for(iter, node.target, node.body, self.copy_scopes(), self._old_cache, self._new_cache))
         self._tasks.append(task)
         return task
 
@@ -127,7 +135,7 @@ class Walker:
         test = self.eval_node(node.test)
         body = node.body
         orelse = node.orelse
-        task = asyncio.create_task(eval_ifexp(test, body, orelse, self.copy_scopes()))
+        task = asyncio.create_task(eval_ifexp(test, body, orelse, self.copy_scopes(), self._old_cache, self._new_cache))
         self._tasks.append(task)
         return task
 
@@ -136,7 +144,7 @@ class Walker:
             raise NotImplementedError
         generator = node.generators[0]
         items = self.eval_node(generator.iter)
-        task = asyncio.create_task(eval_listcomp(items, generator.target, node.elt, self.copy_scopes()))
+        task = asyncio.create_task(eval_listcomp(items, generator.target, node.elt, self.copy_scopes(), self._old_cache, self._new_cache))
         self._tasks.append(task)
         return task
 
@@ -190,7 +198,17 @@ async def eval_attribute(value_future, attr):
     return getattr(value, attr)
 
 
-async def eval_call(func_future, pre_args=None, pre_kwargs=None, *, ast_args=None, ast_kwargs=None, executor=None):
+async def eval_call(
+    func_future,
+    pre_args=None,
+    pre_kwargs=None,
+    *,
+    ast_args=None,
+    ast_kwargs=None,
+    executor=None,
+    old_cache: Optional[Cache] = None,
+    new_cache: Optional[Cache] = None
+):
     pre_args = [] if pre_args is None else pre_args
     pre_kwargs = [] if pre_kwargs is None else pre_kwargs
     ast_args = [type(arg) for arg in pre_args] if ast_args is None else ast_args
@@ -211,13 +229,24 @@ async def eval_call(func_future, pre_args=None, pre_kwargs=None, *, ast_args=Non
             kwargs[ast_kwarg.arg] = value
     loop = asyncio.get_running_loop()
     func = await ensure_future(func_future)
-    partial_func = functools.partial(func, *args, **kwargs)
-    return await loop.run_in_executor(executor, partial_func)
+    if inspect.isbuiltin(func) or type(func).__name__ == 'Desync' or func.__name__ in __builtins__:
+        result = func(*args, **kwargs)
+    else:
+        func_hash = hash_function(func)
+        input_hash = hash_input(args, kwargs)
+        if old_cache and old_cache.has_outputs(func_hash, input_hash):
+            result = old_cache.get_outputs(func_hash, input_hash)
+        else:
+            partial_func = functools.partial(func, *args, **kwargs)
+            result = await loop.run_in_executor(executor, partial_func)
+        if new_cache:
+            new_cache.set_outputs(func_hash, input_hash, copy.deepcopy(result))
+    return result
 
 
-async def eval_dictcomp(items_future, target, key, value, scopes):
+async def eval_dictcomp(items_future, target, key, value, scopes, old_cache, new_cache):
     items = await resolve(items_future)
-    walker = Walker(scopes)
+    walker = Walker(scopes, old_cache, new_cache)
     res = {}
     scopes.append({})
     for item in items:
@@ -228,9 +257,9 @@ async def eval_dictcomp(items_future, target, key, value, scopes):
     return res
 
 
-async def eval_for(iter_future, target, body, scopes):
+async def eval_for(iter_future, target, body, scopes, old_cache, new_cache):
     iter = await resolve(iter_future)
-    walker = Walker(scopes)
+    walker = Walker(scopes, old_cache, new_cache)
     scopes.append({})
     for item in iter:
         walker.assign(target, item)
@@ -239,15 +268,15 @@ async def eval_for(iter_future, target, body, scopes):
     scopes.pop()
 
 
-async def eval_ifexp(test_future, body, orelse, scopes):
+async def eval_ifexp(test_future, body, orelse, scopes, old_cache, new_cache):
     test = await test_future
-    walker = Walker(scopes)
+    walker = Walker(scopes, old_cache, new_cache)
     return walker.eval_node(body) if test else walker.eval_node(orelse)
 
 
-async def eval_listcomp(items_future, target, elt, scopes):
+async def eval_listcomp(items_future, target, elt, scopes, old_cache, new_cache):
     items = await resolve(items_future)
-    walker = Walker(scopes)
+    walker = Walker(scopes, old_cache, new_cache)
     res = []
     scopes.append({})
     for item in items:

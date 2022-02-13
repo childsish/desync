@@ -13,6 +13,11 @@ def hash_function(func):
     return zlib.adler32(ast_str.encode('ascii'))
 
 
+def hash_input(args, kwargs):
+    hash_ = zlib.adler32(str(args).encode('ascii'))
+    return zlib.adler32(str(sorted(kwargs.items())).encode('ascii'), hash_)
+
+
 def remove_docstring(node: ast.AST):
     if not (isinstance(node, ast.FunctionDef) or isinstance(node, ast.ClassDef)):
         return
