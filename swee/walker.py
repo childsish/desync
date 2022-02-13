@@ -186,7 +186,7 @@ async def eval_assign(futures: Sequence[asyncio.Future], values: Union[asyncio.F
 
 
 async def eval_attribute(value_future, attr):
-    value = await value_future
+    value = await ensure_future(value_future)
     return getattr(value, attr)
 
 
