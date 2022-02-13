@@ -6,10 +6,10 @@ import inspect
 
 from concurrent.futures import ThreadPoolExecutor
 from operator import mod
-from swee.cache import Cache
-from swee.futuretools import ensure_future, is_future
-from swee.hashtools import hash_function, hash_input
-from swee.resolver import resolve
+from desync.cache import Cache
+from desync.futuretools import ensure_future, is_future
+from desync.hashtools import hash_function, hash_input
+from desync.resolver import resolve
 from typing import Optional, Sequence, Union
 
 

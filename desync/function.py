@@ -1,7 +1,7 @@
 import ast
 import inspect
 
-from swee.hashtools import hash_function
+from desync.hashtools import hash_function
 from typing import Callable
 
 

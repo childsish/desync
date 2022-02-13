@@ -1,4 +1,4 @@
-from swee.version import Version
+from desync.version import Version
 from unittest import TestCase
 
 

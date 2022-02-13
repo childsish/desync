@@ -1,12 +1,12 @@
 import ast
 import asyncio
 
-from swee.cache import Cache
-from swee.function import Function
-from swee.futuretools import ensure_future
-from swee.resolver import resolve
-from swee.version import Version
-from swee.walker import Walker
+from desync.cache import Cache
+from desync.function import Function
+from desync.futuretools import ensure_future
+from desync.resolver import resolve
+from desync.version import Version
+from desync.walker import Walker
 
 
 class Desync:

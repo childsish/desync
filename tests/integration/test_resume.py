@@ -1,8 +1,8 @@
 import dataclasses
 import unittest
 
-from swee import desync
-from swee.version import Version
+from desync import desync
+from desync.version import Version
 from typing import Sequence
 
 

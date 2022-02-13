@@ -1,4 +1,4 @@
-from swee.cache import Cache
+from desync.cache import Cache
 from unittest import TestCase
 
 

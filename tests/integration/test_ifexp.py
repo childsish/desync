@@ -1,6 +1,6 @@
 import unittest
 
-from swee import desync
+from desync import desync
 
 
 def poke(item):

@@ -1,7 +1,7 @@
 import dataclasses
 import unittest
 
-from swee import desync
+from desync import desync
 
 
 @dataclasses.dataclass

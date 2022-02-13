@@ -2,7 +2,7 @@ import time
 import unittest
 import subprocess
 
-from swee import desync
+from desync import desync
 
 
 def inner_args(item):
