@@ -1,17 +1,20 @@
 import ast
 import asyncio
 
+from concurrent.futures import ThreadPoolExecutor
 from desync.cache import Cache
 from desync.function import Function
 from desync.futuretools import ensure_future
 from desync.resolver import resolve
 from desync.version import Version
 from desync.walker import Walker
+from typing import Optional
 
 
 class Desync:
-    def __init__(self, func):
+    def __init__(self, func, executor: Optional[ThreadPoolExecutor] = None):
         self._func = Function(func)
+        self._executor = executor
         self._version = Version(self._func.get_hash(), self._func.get_step_hashes())
         self._old_cache = Cache()
         self._new_cache = Cache()
@@ -51,6 +54,10 @@ class Desync:
         return self._new_cache
 
     async def run_outer_workflow(self, args, kwargs):
+        if self._executor:
+            loop = asyncio.get_running_loop()
+            loop.set_default_executor(self._executor)
+
         scopes = [
             self._func.get_module().__dict__,
             {key: ensure_future(args[i]) if i < len(args) else ensure_future(kwargs[key])

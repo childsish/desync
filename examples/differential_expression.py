@@ -1,9 +1,10 @@
 from desync import desync
 
 
-def check_read_quality(read_file):
-    print(f'checking read quality for {read_file}')
-    return read_file + '.txt'
+def check_read_quality(read_file, settings):
+    with settings['resources'].request(max_cpus=4) as cpus:
+        print(f'checking read quality for {read_file}')
+        return read_file + '.txt'
 
 
 def trim_reads(read_file, mate_read_file):
@@ -56,7 +57,7 @@ def differential_expression_workflow(
 
 
 if __name__ == '__main__':
-    res = differential_expression_workflow(
+    res = differential_exression_workflow(
         ['A_01.fasta.gz', 'B_01.fasta.gz', 'C_01.fasta.gz', 'D_01.fasta.gz', 'E_01.fasta.gz'],
         ['A_02.fasta.gz', 'B_02.fasta.gz', 'C_02.fasta.gz', 'D_02.fasta.gz', 'E_02.fasta.gz'],
         'genome.fasta.gz',

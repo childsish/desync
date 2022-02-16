@@ -4,7 +4,6 @@ import copy
 import functools
 import inspect
 
-from concurrent.futures import ThreadPoolExecutor
 from operator import mod
 from desync.cache import Cache
 from desync.futuretools import ensure_future, is_future
@@ -17,7 +16,6 @@ class Walker:
     def __init__(self, scopes, old_cache, new_cache):
         self._scopes = scopes
         self._tasks = []
-        self._executor = ThreadPoolExecutor(4)
         self._old_cache = old_cache
         self._new_cache = new_cache
 
@@ -44,14 +42,20 @@ class Walker:
             return self.eval_for(node)
         elif isinstance(node, ast.IfExp):
             return self.eval_ifexp(node)
+        elif isinstance(node, ast.List):
+            return self.eval_list(node)
         elif isinstance(node, ast.ListComp):
             return self.eval_listcomp(node)
         elif isinstance(node, ast.Name):
             return self.eval_name(node)
         elif isinstance(node, ast.Return):
             return self.eval_return(node)
+        elif isinstance(node, ast.Set):
+            return self.eval_set(node)
         elif isinstance(node, ast.Starred):
             return self.eval_starred(node)
+        elif isinstance(node, ast.Tuple):
+            return self.eval_tuple(node)
         else:
             raise NotImplementedError(f'eval_node not implemented for {node}')
 
@@ -70,7 +74,7 @@ class Walker:
         return task
 
     def eval_await(self, node: ast.Await):
-        task = asyncio.create_task(eval_call(self.eval_node(node.value)))
+        task = asyncio.create_task(eval_call(ensure_future(self.eval_node(node.value))))
         self._tasks.append(task)
         return task
 
@@ -79,22 +83,20 @@ class Walker:
         right = self.eval_node(node.right)
         op = mod if isinstance(node.op, ast.Mod) else None
         task = asyncio.create_task(eval_call(
-            op,
+            ensure_future(op),
             [left, right],
             ast_args=[type(left), type(right)],
-            executor=self._executor,
         ))
         self._tasks.append(task)
         return task
 
     def eval_call(self, node: ast.Call):
         task = asyncio.create_task(eval_call(
-            self.eval_node(node.func),
+            ensure_future(self.eval_node(node.func)),
             [self.eval_node(arg) for arg in node.args],
             [self.eval_node(keyword.value) for keyword in node.keywords],
             ast_args=node.args,
             ast_kwargs=node.keywords,
-            executor=self._executor,
             old_cache=self._old_cache,
             new_cache=self._new_cache,
         ))
@@ -139,6 +141,9 @@ class Walker:
         self._tasks.append(task)
         return task
 
+    def eval_list(self, node: ast.List):
+        return [self.eval_node(elt) for elt in node.elts]
+
     def eval_listcomp(self, node: ast.ListComp):
         if len(node.generators) != 1:
             raise NotImplementedError
@@ -157,8 +162,14 @@ class Walker:
     def eval_return(self, node: ast.Return):
         return self.eval_node(node.value)
 
+    def eval_set(self, node: ast.Set):
+        return set(self.eval_node(elt) for elt in node.elts)
+
     def eval_starred(self, node: ast.Starred):
         return self.eval_node(node.value)
+
+    def eval_tuple(self, node: ast.Tuple):
+        return tuple(self.eval_node(elt) for elt in node.elts)
 
     def assign(self, target, value):
         if not isinstance(target, (ast.Tuple, ast.List)):
@@ -199,13 +210,12 @@ async def eval_attribute(value_future, attr):
 
 
 async def eval_call(
-    func_future,
+    func_future: asyncio.Future,
     pre_args=None,
     pre_kwargs=None,
     *,
     ast_args=None,
     ast_kwargs=None,
-    executor=None,
     old_cache: Optional[Cache] = None,
     new_cache: Optional[Cache] = None
 ):
@@ -228,7 +238,7 @@ async def eval_call(
         else:
             kwargs[ast_kwarg.arg] = value
     loop = asyncio.get_running_loop()
-    func = await ensure_future(func_future)
+    func = await func_future
     if inspect.isbuiltin(func) or type(func).__name__ == 'Desync' or func.__name__ in __builtins__:
         result = func(*args, **kwargs)
     else:
@@ -238,7 +248,10 @@ async def eval_call(
             result = old_cache.get_outputs(func_hash, input_hash)
         else:
             partial_func = functools.partial(func, *args, **kwargs)
-            result = await loop.run_in_executor(executor, partial_func)
+            if inspect.iscoroutinefunction(func):
+                result = await loop.run_in_executor(None, partial_func())
+            else:
+                result = await loop.run_in_executor(None, partial_func)
         if new_cache:
             new_cache.set_outputs(func_hash, input_hash, copy.deepcopy(result))
     return result

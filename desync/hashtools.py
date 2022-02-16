@@ -5,7 +5,7 @@ import zlib
 
 def hash_function(func):
     tree = ast.parse(inspect.getsource(func))
-    assert len(tree.body) == 1 and isinstance(tree.body[0], ast.FunctionDef)
+    assert len(tree.body) == 1 and isinstance(tree.body[0], (ast.FunctionDef, ast.AsyncFunctionDef))
     tree.body[0].name = ''
     for node in ast.walk(tree):
         remove_docstring(node)
