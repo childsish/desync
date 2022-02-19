@@ -5,13 +5,13 @@ from desync import desync
 
 
 def inner_args(item):
-    prc = subprocess.Popen(['ping', '-n', '2', '127.0.0.1'])
+    prc = subprocess.Popen(['ping', '-c', '2', '127.0.0.1'], stdout=subprocess.PIPE)
     prc.communicate()
     return item + 1
 
 
 def inner_kwargs(*, item):
-    prc = subprocess.Popen(['ping', '-n', '2', '127.0.0.1'])
+    prc = subprocess.Popen(['ping', '-c', '2', '127.0.0.1'], stdout=subprocess.PIPE)
     prc.communicate()
     return item + 1
 

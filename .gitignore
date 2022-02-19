@@ -1,4 +1,7 @@
 .idea
+build
+desync.egg-info
+dist
 venv
 
 __pycache__

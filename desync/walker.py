@@ -247,10 +247,10 @@ async def eval_call(
         if old_cache and old_cache.has_outputs(func_hash, input_hash):
             result = old_cache.get_outputs(func_hash, input_hash)
         else:
-            partial_func = functools.partial(func, *args, **kwargs)
             if inspect.iscoroutinefunction(func):
-                result = await loop.run_in_executor(None, partial_func())
+                result = await func(*args, **kwargs)
             else:
+                partial_func = functools.partial(func, *args, **kwargs)
                 result = await loop.run_in_executor(None, partial_func)
         if new_cache:
             new_cache.set_outputs(func_hash, input_hash, copy.deepcopy(result))

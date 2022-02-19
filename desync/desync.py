@@ -1,5 +1,6 @@
 import ast
 import asyncio
+import pickle
 
 from concurrent.futures import ThreadPoolExecutor
 from desync.cache import Cache
@@ -47,11 +48,23 @@ class Desync:
     def get_version(self):
         return self._version
 
+    def load_version(self, fileobj):
+        self.set_version(pickle.load(fileobj))
+
+    def save_version(self, fileobj):
+        pickle.dump(self.get_version(), fileobj)
+
     def set_cache(self, cache):
         self._old_cache = cache
 
     def get_cache(self):
         return self._new_cache
+
+    def load_cache(self, fileobj):
+        self.set_cache(pickle.load(fileobj))
+
+    def save_cache(self, fileobj):
+        pickle.dump(self.get_cache(), fileobj)
 
     async def run_outer_workflow(self, args, kwargs):
         if self._executor:
