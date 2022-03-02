@@ -40,6 +40,8 @@ class Walker:
             return self.eval_expr(node)
         elif isinstance(node, ast.For):
             return self.eval_for(node)
+        elif isinstance(node, ast.If):
+            return self.eval_if(node)
         elif isinstance(node, ast.IfExp):
             return self.eval_ifexp(node)
         elif isinstance(node, ast.List):
@@ -48,6 +50,8 @@ class Walker:
             return self.eval_listcomp(node)
         elif isinstance(node, ast.Name):
             return self.eval_name(node)
+        elif isinstance(node, ast.Num):
+            return self.eval_num(node)
         elif isinstance(node, ast.Return):
             return self.eval_return(node)
         elif isinstance(node, ast.Set):
@@ -133,6 +137,14 @@ class Walker:
             res = self.eval_node(statement)
         return res
 
+    def eval_if(self, node: ast.If):
+        test = self.eval_node(node.test)
+        body = node.body
+        orelse = node.orelse
+        task = asyncio.create_task(eval_if(test, body, orelse, self.copy_scopes(), self._old_cache, self._new_cache))
+        self._tasks.append(task)
+        return task
+
     def eval_ifexp(self, node: ast.IfExp):
         test = self.eval_node(node.test)
         body = node.body
@@ -158,6 +170,12 @@ class Walker:
             if node.id in scope:
                 return scope[node.id]
         return __builtins__[node.id]
+
+    def eval_num(self, node: ast.Num):
+        loop = asyncio.get_running_loop()
+        future = loop.create_future()
+        future.set_result(node.n)
+        return future
 
     def eval_return(self, node: ast.Return):
         return self.eval_node(node.value)
@@ -242,18 +260,21 @@ async def eval_call(
     if inspect.isbuiltin(func) or type(func).__name__ == 'Desync' or func.__name__ in __builtins__:
         result = func(*args, **kwargs)
     else:
-        func_hash = hash_function(func)
-        input_hash = hash_input(args, kwargs)
-        if old_cache and old_cache.has_outputs(func_hash, input_hash):
-            result = old_cache.get_outputs(func_hash, input_hash)
-        else:
-            if inspect.iscoroutinefunction(func):
-                result = await func(*args, **kwargs)
+        try:
+            func_hash = hash_function(func)
+            input_hash = hash_input(args, kwargs)
+            if old_cache and old_cache.has_outputs(func_hash, input_hash):
+                result = old_cache.get_outputs(func_hash, input_hash)
             else:
-                partial_func = functools.partial(func, *args, **kwargs)
-                result = await loop.run_in_executor(None, partial_func)
-        if new_cache:
-            new_cache.set_outputs(func_hash, input_hash, copy.deepcopy(result))
+                if inspect.iscoroutinefunction(func):
+                    result = await func(*args, **kwargs)
+                else:
+                    partial_func = functools.partial(func, *args, **kwargs)
+                    result = await loop.run_in_executor(None, partial_func)
+            if new_cache:
+                new_cache.set_outputs(func_hash, input_hash, copy.deepcopy(result))
+        except TypeError:
+            result = func(*args, **kwargs)
     return result
 
 
@@ -274,11 +295,28 @@ async def eval_for(iter_future, target, body, scopes, old_cache, new_cache):
     iter = await resolve(iter_future)
     walker = Walker(scopes, old_cache, new_cache)
     scopes.append({})
+    res = None
     for item in iter:
         walker.assign(target, item)
         for statement in body:
-            walker.eval_node(statement)
+            res = walker.eval_node(statement)
     scopes.pop()
+    return res
+
+
+async def eval_if(test_future, body, orelse, scopes, old_cache, new_cache):
+    test = await test_future
+    walker = Walker(scopes, old_cache, new_cache)
+    scopes.append({})
+    res = None
+    if test:
+        for statement in body:
+            res = walker.eval_node(statement)
+    else:
+        for statement in orelse:
+            res = walker.eval_node(statement)
+    scopes.pop()
+    return res
 
 
 async def eval_ifexp(test_future, body, orelse, scopes, old_cache, new_cache):
