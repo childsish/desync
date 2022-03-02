@@ -17,7 +17,7 @@ def outer(items):
     return 'poked' if sum(poked_and_prodded) % 2 else 'prodded'
 
 
-class TestListcomp(unittest.TestCase):
-    def test_listcomp(self):
+class TestIfExp(unittest.TestCase):
+    def test_ifexp(self):
         self.assertEqual('prodded', outer(range(10)))
         self.assertEqual('poked', outer(range(11)))
