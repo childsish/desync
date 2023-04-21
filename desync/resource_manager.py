@@ -34,7 +34,7 @@ class ResourceManager:
                 else:
                     granted[key] = None
             elif parts[0] == 'min':
-                if value > self.max_resources[parts[0]]:
+                if value > self.max_resources[parts[1]]:
                     raise ValueError(f'requesting a minimum of {value} {key}, but a maximum of {self.available_resources[key]} are available')
                 elif value <= self.available_resources[parts[1]]:
                     granted[parts[1]] = max(value, self.available_resources[parts[1]])
